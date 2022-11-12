@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <assert.h>
+#include "mlb.h"
 
 typedef struct node {
     uint32_t size;
@@ -65,7 +67,7 @@ void * gc_malloc(size_t alloc_size) {
     size_t num;
     node_t *current, *previous;
 
-    num = (alloc_size + sizeof(node_t)-1) / sizeof(node_t) +1;
+    num = (alloc_size + node_size-1) / node_size +1;
     previous = free_blocks;
     current = previous->next;
     while(current->next!=NULL) {
@@ -73,19 +75,21 @@ void * gc_malloc(size_t alloc_size) {
             previous->next = current->next;
         else if (current->size > num) {
             current->size -= num;
-            current += p->size;
+            current += current->size;
             current->size = num;
         }
 
-        free_blocks = precious;
+        free_blocks = previous;
         
         // add block to used blocks
         if (used_blocks = NULL)
-            used_blocks = current->next = p;
+            used_blocks = current->next = current;
         else {
             current->next = used_blocks->next;
             used_blocks->next = current;
         }
+
+        return (void *) (current + node_size);
         
         // need to allocation more memory
         if (current==free_blocks) {
@@ -93,7 +97,7 @@ void * gc_malloc(size_t alloc_size) {
             if (current==NULL)
                 return NULL;
         }
-        precious = current;
+        previous = current;
         current = current->next;
     }
 }
@@ -103,8 +107,8 @@ void * gc_malloc(size_t alloc_size) {
 // | node | -------------rest of block----------------|
 //                 ^ i need to check if something points to that, but not check the node area
 
-void scan_region(uintptr_t start, uintptr_t end) {
-    for(uintptr_t current = start; current < end; current++) {
+void scan_region(uintptr_t *start, uintptr_t *end) {
+    for(uintptr_t *current = start; current < end; current++) {
         // loop through used_blocks and see if the address at current points to any of them
         // this would mean dereferencing current as a pointer
         uintptr_t to_check = *current; // dereference current to a pointer
@@ -171,7 +175,11 @@ void gc_collect() {
     scan_region(&etext, &end);
     
     // get stack top address
-    asm volatile ("movl %%ebp, %0" : "=r" (stack_top));
+    // asm volatile ("movl %%ebp, %0" : "=r" (stack_top));
+    {
+        register void *sp asm ("sp");
+        stack_top = (uintptr_t)sp;
+    }
     // scan stack
     scan_region(stack_top, stack_bottom);
 
@@ -179,10 +187,10 @@ void gc_collect() {
     scan_heap();
 
     // remove unmarked nodes
-    node_t *p
+    node_t *p;
     node_t *prev_p;
     node_t *tp;
-    for(prevp = used_blocks, p = used_blocks->next; ; prevp = p, p = p->next) {
+    for(prev_p = used_blocks, p = used_blocks->next; ; prev_p = p, p = p->next) {
         next_chunk:
             if(p->next->mark == false) {
                 tp = p;
