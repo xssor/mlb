@@ -13,20 +13,20 @@ typedef struct node {
 } node_t;
 static const node_size = sizeof(node_t);
 
-static node_t *free_blocks;
-static node_t *used_blocks;
 static node_t starter_block;
 static uintptr_t stack_bottom;
+static node_t *free_blocks = &starter_block;
+static node_t *used_blocks;
 
 /* put block into the free blocks */
 static void add_to_free(node_t *block) {
     node_t *current = free_blocks;
 
     // find the position that the block has been partitioned from
-    while(current < block || current->next > block){
-        if (current >= block->next && (block > current || block < current->next))
+    for(current = free_blocks; !(block > current && block < current->next); current = current->next) {
+        if(current >= current->next && (block > current || block < current->next)) {
             break;
-            current = current->next;
+        }
     }
     
     // if block connects to current->next
@@ -44,7 +44,8 @@ static void add_to_free(node_t *block) {
     } else {
         current->next = block;   
     }
-    free(block);
+    free_blocks = current;
+    // free(block);
 }
 
 static node_t * alloc_more(size_t num) {
@@ -71,26 +72,27 @@ void * gc_malloc(size_t alloc_size) {
     previous = free_blocks;
     current = previous->next;
     while(current->next!=NULL) {
-        if (current->size == num)
-            previous->next = current->next;
-        else if (current->size > num) {
-            current->size -= num;
-            current += current->size;
-            current->size = num;
-        }
+        if (current->size >= num) {
+            if (current->size == num)
+                previous->next = current->next;
+            else if (current->size > num) {
+                current->size -= num;
+                current += current->size;
+                current->size = num;
+            }
 
-        free_blocks = previous;
-        
-        // add block to used blocks
-        if (used_blocks = NULL)
-            used_blocks = current->next = current;
-        else {
-            current->next = used_blocks->next;
-            used_blocks->next = current;
-        }
+            free_blocks = previous;
+    
+            // add block to used blocks
+            if (used_blocks == NULL)
+                used_blocks = current->next = current;
+            else {
+                current->next = used_blocks->next;
+                used_blocks->next = current;
+            }
+            return (void *) (current + node_size);
+        }        
 
-        return (void *) (current + node_size);
-        
         // need to allocation more memory
         if (current==free_blocks) {
             current = alloc_more(num);
@@ -113,7 +115,7 @@ void scan_region(uintptr_t *start, uintptr_t *end) {
         // this would mean dereferencing current as a pointer
         uintptr_t to_check = *current; // dereference current to a pointer
         node_t *walker = used_blocks;
-        while(walker->next != NULL) {
+        while((walker->next != NULL) && (walker->next != used_blocks)) {
             // check if to_check is inside the space specified by walker
             if((to_check >= walker + node_size) && (to_check < walker + node_size + walker->size)) {
                 walker->mark = true;
@@ -127,9 +129,9 @@ void scan_region(uintptr_t *start, uintptr_t *end) {
 // scan marked blocks for references to unmarked blocks
 void scan_heap() {
     node_t *walker = used_blocks;
-    while(walker->next != NULL) {
+    while((walker->next != NULL) && (walker->next != used_blocks)) {
         if(walker->mark == true) {
-            scan_region((uintptr_t)(walker + node_size), (uintptr_t)(walker + node_size + walker->size));
+            scan_region((uintptr_t *)(walker + node_size), (uintptr_t *)(walker + node_size + walker->size));
         }
         walker = walker->next;
     }
@@ -175,7 +177,6 @@ void gc_collect() {
     scan_region(&etext, &end);
     
     // get stack top address
-    // asm volatile ("movl %%ebp, %0" : "=r" (stack_top));
     {
         register void *sp asm ("sp");
         stack_top = (uintptr_t)sp;
@@ -210,7 +211,7 @@ void gc_collect() {
             break;
         }
     }
-    // call free on list
+    return;
 }
 
 
